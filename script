@@ -1,0 +1,75 @@
+# Function to generate a random number with a specified number of digits
+function Get-RandomNumber {
+    param (
+        [int]$Digits = 5
+    )
+    $min = [math]::Pow(10, $Digits - 1)
+    $max = [math]::Pow(10, $Digits) - 1
+    return (Get-Random -Minimum $min -Maximum ($max + 1))
+}
+
+# Variables
+$RandomNumber = Get-RandomNumber -Digits 5
+$VMName = "A23-$RandomNumber"
+$VMFolder = "C:\VMs\$VMName"
+$ImportPath = "\\NetworkShare\VMExports\$VMName"
+$VMSwitchName = "Default Switch"  # Name of the virtual switch to connect the VM to
+$DomainName = "yourdomain.com"
+$DomainUser = "domainjoinuser"
+$DomainPassword = "P@ssword123"
+$OUPath = "OU=Computers,DC=yourdomain,DC=com"
+$ProcessorCount = 2
+
+# Generate current date for description
+$CurrentDate = Get-Date -Format "yyyy-MM-dd"
+
+# Ensure the VM is powered off (if it exists) before making changes
+if (Get-VM -Name $VMName -ErrorAction SilentlyContinue) {
+    Stop-VM -Name $VMName -Force
+}
+
+# Import the VM
+Import-VM -Path $ImportPath -GenerateNewId -Copy
+
+# Set the VM name to the new name
+Rename-VM -VM (Get-VM -Path $ImportPath) -NewName $VMName
+
+# Get the MAC address of the VM's network adapter
+$MACAddress = (Get-VMNetworkAdapter -VMName $VMName).MacAddress
+
+# Output the MAC address
+Write-Host "The MAC address of the VM $VMName is: $MACAddress"
+
+# Configure the VM's processor settings
+Set-VM -Name $VMName -ProcessorCount $ProcessorCount
+
+# Configure network switch
+$VMNetworkAdapter = Get-VMNetworkAdapter -VMName $VMName
+Connect-VMNetworkAdapter -VMNetworkAdapter $VMNetworkAdapter -SwitchName $VMSwitchName
+
+# Set VM description with current date
+Set-VM -Name $VMName -Description "Imported on $CurrentDate"
+
+# Start the VM
+Start-VM -Name $VMName
+
+# Allow time for the VM to boot up
+Start-Sleep -Seconds 60
+
+# Join the VM to the domain
+Invoke-Command -VMName $VMName -ScriptBlock {
+    $DomainName = "yourdomain.com"
+    $DomainUser = "domainjoinuser"
+    $DomainPassword = "P@ssword123"
+    $OUPath = "OU=Computers,DC=yourdomain,DC=com"
+
+    # Join the VM to the domain
+    Add-Computer -DomainName $DomainName -OUPath $OUPath -Credential (New-Object PSCredential("$DomainName\$DomainUser", (ConvertTo-SecureString $DomainPassword -AsPlainText -Force))) -Restart
+}
+
+# Enhanced Session Mode: Ensure it's enabled on the Hyper-V host and set up the VM
+Enable-VMIntegrationService -VMName $VMName -Name "Guest Service Interface"
+Set-VM -Name $VMName -EnhancedSessionTransportType HvSocket
+
+# Power off the VM to complete the process
+Stop-VM -Name $VMName -Force
